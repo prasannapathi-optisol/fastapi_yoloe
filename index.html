@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>QC Object Detection Automation Tool</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        h1 {
+            text-align: center;
+        }
+
+        .step-header {
+            font-size: 1.5em;
+            margin-bottom: 10px;
+        }
+
+        .buttons {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 20px;
+        }
+
+        .buttons button {
+            padding: 10px 20px;
+            font-size: 1em;
+            cursor: pointer;
+        }
+
+        .step-content {
+            margin-top: 20px;
+        }
+
+        .file-inputs {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 20px;
+        }
+
+        .image-preview {
+            max-width: 500px;
+            margin-top: 20px;
+            display: block;
+            margin-left: auto;
+            margin-right: auto;
+        }
+
+        .annotations {
+            margin-top: 20px;
+        }
+
+        .annotation-item {
+            padding: 5px;
+            border-bottom: 1px solid #ccc;
+        }
+
+        .warning {
+            color: red;
+        }
+
+        .success {
+            color: green;
+        }
+
+        canvas {
+            border: 1px solid #ccc;
+            touch-action: none;
+        }
+
+        #bboxList {
+            margin-top: 10px;
+            font-size: 16px;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <h1>QC Object Detection Automation Tool</h1>
+
+        <!-- Step Navigation -->
+        <div id="step-navigation" class="buttons">
+            <button id="step1-btn">Step 1: Upload Image and Class Names</button>
+            <button id="step2-btn">Step 2: Annotate Image</button>
+            <button id="step3-btn">Step 3: Process Image with YOLO</button>
+        </div>
+
+        <!-- Step 1 -->
+        <div id="step1" class="step-content">
+            <div class="step-header">Step 1: Upload Image and Class Names</div>
+            <div class="file-inputs">
+                <button onclick="showUploader('step1')">📁 Upload Image</button>
+            </div>
+            <div id="uploaded-image-container" class="image-preview"></div>
+            <input type="text" id="class-input" placeholder="Enter Class Names (comma-separated)" />
+            <div id="step1-warning" class="warning"></div>
+            <button id="next-step1-btn" class="buttons" onclick="goToStep2()">Next ➡️ Annotate</button>
+        </div>
+
+        <!-- Step 2 -->
+        <div id="step2" class="step-content" style="display: none;">
+            <div class="step-header">Step 2: Annotate Image</div>
+            <canvas id="canvas"></canvas>
+            <div id="bboxList"></div>
+            <div id="step2-warning" class="warning"></div>
+            <button id="next-step2-btn" class="buttons" onclick="goToStep3()">Next ➡️ Process with YOLO</button>
+        </div>
+
+        <!-- Step 3 -->
+        <div id="step3" class="step-content" style="display: none;">
+            <div class="step-header">Step 3: Process Image with YOLO</div>
+            <div class="file-inputs">
+                <button onclick="showUploader('step3')">📁 Upload Target Image</button>
+            </div>
+            <div id="target-image-container" class="image-preview"></div>
+            <div id="step3-warning" class="warning"></div>
+            <button id="run-model-btn" class="buttons" onclick="runYOLO()">Run Model</button>
+        </div>
+    </div>
+
+    <script>
+        let currentStep = 1;
+
+        let classNames = [];
+        let imageForAnnotation = null;
+        let annotations = [];
+
+        // Switch between steps
+        function goToStep(step) {
+            currentStep = step;
+            document.getElementById('step1').style.display = (step === 1) ? 'block' : 'none';
+            document.getElementById('step2').style.display = (step === 2) ? 'block' : 'none';
+            document.getElementById('step3').style.display = (step === 3) ? 'block' : 'none';
+        }
+
+        // Show the File Upload option
+        function showUploader(step) {
+            const fileInput = document.createElement("input");
+            fileInput.type = "file";
+            fileInput.accept = "image/*";
+            fileInput.onchange = function (e) {
+                const file = e.target.files[0];
+                const reader = new FileReader();
+                reader.onload = function (event) {
+                    const imgElement = document.createElement('img');
+                    imgElement.src = event.target.result;
+                    imgElement.classList.add("image-preview");
+                    if (step === 'step1') {
+                        document.getElementById('uploaded-image-container').appendChild(imgElement);
+                        imageForAnnotation = imgElement;
+                    } else if (step === 'step3') {
+                        document.getElementById('target-image-container').appendChild(imgElement);
+                    }
+                };
+                reader.readAsDataURL(file);
+            };
+            fileInput.click();
+        }
+
+        // Step 1: Class Name and Image Input
+        function goToStep2() {
+            const classInput = document.getElementById('class-input').value;
+            if (!classInput) {
+                document.getElementById('step1-warning').textContent = "Please enter class names.";
+                return;
+            }
+            classNames = classInput.split(',').map(name => name.trim());
+            goToStep(2);
+            initializeCanvas();
+        }
+
+        // Step 2: Initialize canvas for annotation
+        function initializeCanvas() {
+            const canvas = document.getElementById('canvas');
+            const ctx = canvas.getContext('2d');
+            let image = new Image();
+            image.src = imageForAnnotation.src;
+
+            let isDrawing = false;
+            let startX, startY, endX, endY;
+
+            // Touch/Mobile Support
+            function getPos(e) {
+                const rect = canvas.getBoundingClientRect();
+                if (e.touches) {
+                    return {
+                        x: e.touches[0].clientX - rect.left,
+                        y: e.touches[0].clientY - rect.top
+                    };
+                }
+                return {
+                    x: e.offsetX,
+                    y: e.offsetY
+                };
+            }
+
+            canvas.addEventListener('mousedown', start);
+            canvas.addEventListener('mousemove', draw);
+            canvas.addEventListener('mouseup', end);
+
+            canvas.addEventListener('touchstart', start);
+            canvas.addEventListener('touchmove', draw);
+            canvas.addEventListener('touchend', end);
+
+            function start(e) {
+                e.preventDefault();
+                const pos = getPos(e);
+                startX = pos.x;
+                startY = pos.y;
+                isDrawing = true;
+            }
+
+            function draw(e) {
+                if (!isDrawing) return;
+                e.preventDefault();
+                const pos = getPos(e);
+                endX = pos.x;
+                endY = pos.y;
+                redraw();
+                ctx.strokeStyle = 'red';
+                ctx.lineWidth = 2;
+                ctx.strokeRect(startX, startY, endX - startX, endY - startY);
+            }
+
+            function end(e) {
+                e.preventDefault();
+                if (!isDrawing) return;
+                isDrawing = false;
+
+                // const bbox = {
+                //     x: Math.round(Math.min(startX, endX)),
+                //     y: Math.round(Math.min(startY, endY)),
+                //     width: Math.round(Math.abs(endX - startX)),
+                //     height: Math.round(Math.abs(endY - startY))
+                // };
+                const bbox = [
+                    Math.round(Math.min(startX, endX)),
+                    Math.round(Math.min(startY, endY)),
+                    Math.round(Math.abs(endX - startX)),
+                    Math.round(Math.abs(endY - startY))
+                ];
+                const selectedClass = prompt("Enter class for this bounding box: " + classNames.join(', '));
+                if (!selectedClass || !classNames.includes(selectedClass.trim())) {
+                    alert("Invalid class name.");
+                    return;
+                }
+
+                annotations.push({ bbox: bbox, class: classNames.indexOf(selectedClass.trim()) });
+                document.getElementById('bboxList').innerHTML += 
+                    `<div>BBox: x=${bbox[0]}, y=${bbox[1]}, w=${bbox[2]}, h=${bbox[3]}, Class: ${selectedClass}</div>`;
+            }
+
+            function redraw() {
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+            }
+
+            image.onload = function () {
+                canvas.width = image.width;
+                canvas.height = image.height;
+                ctx.drawImage(image, 0, 0);
+            };
+        }
+
+        // Step 3: Process with YOLO using FastAPI
+        function goToStep3() {
+        // const targetImage = document.getElementById('target-image-container').querySelector('img');
+        // if (targetImage || targetImage.src === '') {
+        //     document.getElementById('step3-warning').textContent = "Please upload a target image.";
+        //     return;
+        // }
+        goToStep(3);
+    }
+    function runYOLO(){
+    const referenceImage = document.getElementById('uploaded-image-container').querySelector('img');
+    const targetImage = document.getElementById('target-image-container').querySelector('img');
+    const referenceImageFile = dataURLtoFile(referenceImage.src, 'reference_image.png');
+    const targetImageFile = dataURLtoFile(targetImage.src, 'target_image.png');
+    if (!referenceImage || !targetImage) {
+        alert("Please upload both reference and target images.");
+        return;
+    }
+
+    const formData = new FormData();
+    formData.append('reference_image', referenceImageFile);  // Base64 image data for reference image
+    formData.append('target_image', targetImageFile);  // Base64 image data for target image
+    formData.append('bboxes', JSON.stringify(annotations.map(a => [...a.bbox])));  // Send the bounding boxes as JSON
+    formData.append('classes', JSON.stringify(annotations.map(a => a.class))); // Send class indices as JSON
+
+    fetch('http://localhost:8000/process_image', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        // Process and display results here
+        alert("YOLO Model processed the image.");
+    })
+    .catch(error => {
+        console.error("Error in processing image:", error);
+        alert("Error processing the image.");
+    });
+}
+function dataURLtoFile(dataURL, filename) {
+    const arr = dataURL.split(',');
+    const mime = arr[0].match(/:(.*?);/)[1];
+    const bstr = atob(arr[1]);
+    let n = bstr.length;  // Use let instead of const
+    const u8arr = new Uint8Array(n);
+    
+    while (n--) {
+        u8arr[n] = bstr.charCodeAt(n);
+    }
+    
+    return new File([u8arr], filename, { type: mime });
+}
+
+    </script>
+</body>
+
+</html>
