@@ -7,5 +7,4 @@ opencv-python-headless
 jinja2
 python-multipart
 aiofiles
-base64
 ultralytics @ git+https://github.com/ultralytics/ultralytics.git
